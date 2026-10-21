@@ -1,29 +1,30 @@
 import { database } from "../../database.js";
-import {
-  encodeStudentCursor,
-  type StudentCursor,
-} from "./student.pagination.js";
+
+type StudentKey = {
+  surname: string;
+  id: string;
+};
 
 type ListStudentsOptions = {
   organisationId: string;
   limit: number;
-  cursor?: StudentCursor;
+  after?: StudentKey;
 };
 
 export async function listStudents({
   organisationId,
   limit,
-  cursor,
+  after,
 }: ListStudentsOptions) {
   const students = await database.student.findMany({
     where: {
       organisationId,
-      ...(cursor && {
+      ...(after && {
         OR: [
-          { surname: { gt: cursor.surname } },
+          { surname: { gt: after.surname } },
           {
-            surname: cursor.surname,
-            id: { gt: cursor.id },
+            surname: after.surname,
+            id: { gt: after.id },
           },
         ],
       }),
@@ -39,17 +40,11 @@ export async function listStudents({
   });
 
   const items = students.slice(0, limit);
-  const hasMore = students.length > limit;
   const lastStudent = items.at(-1);
 
-  const nextCursor = hasMore && lastStudent
-    ? encodeStudentCursor({
-        version: 1,
-        organisationId,
-        surname: lastStudent.surname,
-        id: lastStudent.id,
-      })
+  const next: StudentKey | null = students.length > limit && lastStudent
+    ? { surname: lastStudent.surname, id: lastStudent.id }
     : null;
 
-  return { items, nextCursor, limit };
+  return { items, next };
 }
