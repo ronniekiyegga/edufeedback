@@ -1,18 +1,23 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
+import { Router } from "express";
 import { createApp } from "../src/app.js";
+import { listen, recordingLogger } from "./support/http.js";
+
+async function startApp(
+  context: TestContext,
+  checkDatabase: () => Promise<void>,
+) {
+  const { logger, entries } = recordingLogger();
+  const app = createApp({ checkDatabase, logger, studentRouter: Router() });
+
+  return { baseUrl: await listen(context, app), entries };
+}
 
 test("readiness succeeds when the database responds", async (context) => {
-  const app = createApp(async () => {});
-  const server = app.listen(0, "127.0.0.1");
-  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const { baseUrl } = await startApp(context, async () => {});
 
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address === "object");
-
-  const response = await fetch(`http://127.0.0.1:${address.port}/ready`);
+  const response = await fetch(`${baseUrl}/ready`);
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
@@ -20,17 +25,10 @@ test("readiness succeeds when the database responds", async (context) => {
 });
 
 test("database failure returns 503 while liveness remains available", async (context) => {
-  const app = createApp(async () => {
-    throw new Error("Database connection failed");
+  const { baseUrl, entries } = await startApp(context, async () => {
+    throw new Error("connect ECONNREFUSED 10.0.0.5:5432 password=secret");
   });
-  const server = app.listen(0, "127.0.0.1");
-  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address === "object");
-
-  const baseUrl = `http://127.0.0.1:${address.port}`;
   const readiness = await fetch(`${baseUrl}/ready`);
   const health = await fetch(`${baseUrl}/health`);
 
@@ -38,4 +36,44 @@ test("database failure returns 503 while liveness remains available", async (con
   assert.deepEqual(await readiness.json(), { status: "unavailable" });
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { status: "ok" });
+
+  assert.deepEqual(entries, [{
+    level: "error",
+    event: "readiness.check_failed",
+    fields: {
+      requestId: readiness.headers.get("x-request-id"),
+      errorName: "Error",
+      errorCode: undefined,
+      adapterKind: undefined,
+      sqlState: undefined,
+    },
+  }]);
+});
+
+test("keeps an upstream request ID and replaces anything else", async (context) => {
+  const { baseUrl } = await startApp(context, async () => {});
+  const upstream = "0d7c1b9e-4f7a-4c1e-9a55-2b8f6f3e8c11";
+
+  const kept = await fetch(`${baseUrl}/health`, {
+    headers: { "X-Request-Id": upstream },
+  });
+  const replaced = await fetch(`${baseUrl}/health`, {
+    headers: { "X-Request-Id": "forged-id" },
+  });
+
+  assert.equal(kept.headers.get("x-request-id"), upstream);
+
+  const generated = replaced.headers.get("x-request-id");
+  assert.ok(generated);
+  assert.notEqual(generated, "forged-id");
+  assert.notEqual(generated, upstream);
+});
+
+test("unknown routes return JSON 404", async (context) => {
+  const { baseUrl } = await startApp(context, async () => {});
+
+  const response = await fetch(`${baseUrl}/missing`);
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "Not found" });
 });

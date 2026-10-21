@@ -11,8 +11,9 @@ Existing features are being reviewed and migrated individually.
 - Next.js frontend starter; the student interface is not implemented yet.
 - Express API with separate HTTP liveness and database readiness endpoints.
 - Prisma schema and migrations for organisations, students and annual enrolments.
-- Student directory API with organisation scoping and bounded pagination.
-- API behaviour tests and PostgreSQL integration tests.
+- Student directory API with organisation scoping and encrypted keyset cursors.
+- API request IDs and structured JSON failure logs.
+- API unit tests and PostgreSQL integration tests.
 - pnpm workspace with TypeScript and one root lockfile.
 - GitHub Actions for web linting, type checking, tests and builds.
 - Multi-stage API Docker image and local PostgreSQL through Compose.
@@ -37,7 +38,9 @@ pnpm install --frozen-lockfile
 ```
 
 Copy `apps/api/.env.example` to `apps/api/.env`. Configure `DATABASE_URL`
-and `DEMO_ORGANISATION_ID` there.
+and `DEMO_ORGANISATION_ID` there, and set `STUDENT_CURSOR_KEY` to the
+output of `openssl rand -base64 32`. The API refuses to start without a
+valid key.
 
 For local PostgreSQL:
 
@@ -51,7 +54,19 @@ Apply migrations to the database configured in `apps/api/.env`:
 pnpm --filter @attainline/api exec prisma migrate deploy
 ```
 
-Migrations create the schema; they do not load synthetic fixtures.
+Migrations create the schema; they do not load data. To fill the local
+Docker database with invented demo students (65 across two fictional
+organisations, enough for three directory pages):
+
+```bash
+SEED_DATABASE_URL="postgresql://attainline:local-development-only@127.0.0.1:5433/attainline" pnpm --filter @attainline/api seed:demo
+```
+
+The seed refuses any target except the local `attainline` database. It
+only adds missing rows, never updates or deletes existing ones, so it is
+safe to rerun. Every name and `DEMO-` reference in it is invented.
+Integration tests create their own fixtures and do not use it.
+
 
 Start each application in a separate terminal:
 
@@ -79,7 +94,7 @@ Requires Docker Desktop or Docker Engine with Compose.
 From the repository root:
 
 ```bash
-docker compose up --build -d --wait
+STUDENT_CURSOR_KEY="$(openssl rand -base64 32)" docker compose up --build -d --wait
 curl -i http://localhost:4101/health
 ```
 
@@ -114,15 +129,29 @@ A null `nextCursor` means no further page was available when queried.
 Page sizes range from 1 to 100. Results are ordered by surname, then ID.
 Offset parameters are no longer accepted.
 
+Surnames are limited to 100 characters (`VARCHAR(100)`). The accepted
+cursor length is derived from that limit, so every stored student
+produces a cursor the API will accept.
+
 Keyset pagination avoids position shifts caused by inserts and deletes
 before the cursor. It does not provide a snapshot: surname changes can
 move students across the boundary, and new rows before it appear only
 after restarting pagination.
 
-Cursors are encoded, not encrypted, and contain a surname and ID.
-Treat them as potentially sensitive; do not log query strings.
+Cursors are opaque AES-256-GCM tokens, so the surname and ID they carry
+stay out of URLs, browser history and logs, and altered tokens are
+rejected. Encryption is not authorisation: every query is still scoped
+to the configured organisation, and a valid cursor from another
+organisation is rejected. Changing `STUDENT_CURSOR_KEY` invalidates
+cursors already issued.
 
-Invalid parameters return 400. Query failures return 503.
+Invalid parameters and cursors return a generic 400. Query failures
+return 503.
+
+Every response carries an `X-Request-Id` header. An incoming UUID is
+kept, so a caller's log lines can share the API's ID. Failure logs
+record Prisma and PostgreSQL error codes, never messages, URLs, cursors
+or student data.
 
 The endpoint has no authentication and is intended only for synthetic
 demo data. Organisation scoping is not user authorisation.
@@ -143,5 +172,6 @@ Run PostgreSQL integration tests against a migrated local database named
 DATABASE_URL="postgresql://attainline:local-development-only@127.0.0.1:5433/attainline_test" pnpm --filter @attainline/api test:integration
 ```
 
-CI runs these checks using an isolated PostgreSQL service.
+CI runs these checks using an isolated PostgreSQL service. API tests
+generate their own throwaway cursor keys, so CI needs no secret.
 Deployment workflows are not configured.

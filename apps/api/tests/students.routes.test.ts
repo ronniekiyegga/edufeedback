@@ -1,93 +1,119 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { randomBytes } from "node:crypto";
 import { test, type TestContext } from "node:test";
 import express from "express";
-import { createStudentRouter } from "../src/features/students/student.routes.js";
 import {
-  encodeStudentCursor,
-} from "../src/features/students/student.pagination.js";
+  createStudentCursorCodec,
+  MAX_CURSOR_LENGTH,
+} from "../src/features/students/student.cursor.js";
+import { createStudentRouter } from "../src/features/students/student.routes.js";
+import { listen, recordingLogger } from "./support/http.js";
 
 const organisationId = "11111111-1111-4111-8111-111111111111";
+const studentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-type StudentQuery = Parameters<typeof createStudentRouter>[1];
+const cursorCodec = createStudentCursorCodec(randomBytes(32));
 
-async function startServer(context: TestContext, query: StudentQuery) {
+type StudentQuery = Parameters<typeof createStudentRouter>[0]["queryStudents"];
+
+async function startServer(context: TestContext, queryStudents: StudentQuery) {
+  const { logger, entries } = recordingLogger();
   const app = express();
-  app.use("/students", createStudentRouter(organisationId, query));
 
-  const server = app.listen(0, "127.0.0.1");
-
-  context.after(
-    () => new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    }),
+  // The router reads the request ID set by the app-level middleware.
+  app.use((_request, response, next) => {
+    response.locals.requestId = "test-request-id";
+    next();
+  });
+  app.use(
+    "/students",
+    createStudentRouter({ organisationId, queryStudents, cursorCodec, logger }),
   );
 
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address === "object");
-
-  return `http://127.0.0.1:${address.port}/students`;
+  return { url: `${await listen(context, app)}/students`, entries };
 }
 
 test("uses default pagination and configured organisation", async (context) => {
   let calls = 0;
-  const result = { items: [], nextCursor: null, limit: 25 };
 
-  const url = await startServer(context, async (options) => {
+  const { url } = await startServer(context, async (options) => {
     calls++;
-    assert.deepEqual(options, { organisationId, limit: 25 });
-    return result;
+    assert.deepEqual(options, { organisationId, limit: 25, after: undefined });
+    return { items: [], next: null };
   });
 
   const response = await fetch(url);
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.deepEqual(await response.json(), result);
+  assert.deepEqual(await response.json(), {
+    items: [],
+    nextCursor: null,
+    limit: 25,
+  });
   assert.equal(calls, 1);
 });
 
-test("passes a validated cursor to the query", async (context) => {
-  const cursor = {
-    version: 1 as const,
-    organisationId,
-    surname: "Reed",
-    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+test("round-trips an encrypted cursor through the query", async (context) => {
+  const item = {
+    id: studentId,
+    institutionStudentRef: "REF-1",
+    firstName: null,
+    surname: "Dunmerrow",
   };
 
-  let calls = 0;
+  const afterKeys: unknown[] = [];
 
-  const url = await startServer(context, async (options) => {
-    calls++;
-    assert.deepEqual(options, { organisationId, limit: 10, cursor });
-    return { items: [], nextCursor: null, limit: 10 };
+  const { url } = await startServer(context, async ({ after, limit }) => {
+    afterKeys.push(after);
+    assert.equal(limit, 1);
+    return { items: [item], next: { surname: item.surname, id: item.id } };
   });
 
-  const response = await fetch(
-    `${url}?limit=10&cursor=${encodeStudentCursor(cursor)}`,
-  );
+  const first = await (await fetch(`${url}?limit=1`)).json();
 
-  assert.equal(response.status, 200);
-  assert.equal(calls, 1);
+  assert.equal(typeof first.nextCursor, "string");
+  assert.ok(!first.nextCursor.includes("Dunmerrow"));
+  assert.deepEqual(cursorCodec.decode(first.nextCursor), {
+    organisationId,
+    surname: "Dunmerrow",
+    id: studentId,
+  });
+
+  const second = await fetch(`${url}?limit=1&cursor=${first.nextCursor}`);
+
+  assert.equal(second.status, 200);
+  assert.deepEqual(afterKeys, [
+    undefined,
+    { surname: "Dunmerrow", id: studentId },
+  ]);
 });
 
 test("rejects invalid parameters without querying", async (context) => {
   let calls = 0;
 
-  const url = await startServer(context, async () => {
+  const { url } = await startServer(context, async () => {
     calls++;
-    return { items: [], nextCursor: null, limit: 25 };
+    return { items: [], next: null };
   });
 
-  const foreignCursor = encodeStudentCursor({
-    version: 1,
+  const validToken = cursorCodec.encode({
+    organisationId,
+    surname: "Dunmerrow",
+    id: studentId,
+  });
+  const tamperedBytes = Buffer.from(validToken, "base64url");
+  tamperedBytes[tamperedBytes.length - 1] ^= 0x01;
+  const tamperedToken = tamperedBytes.toString("base64url");
+  const otherKeyToken = createStudentCursorCodec(randomBytes(32)).encode({
+    organisationId,
+    surname: "Dunmerrow",
+    id: studentId,
+  });
+  const foreignOrganisationToken = cursorCodec.encode({
     organisationId: "22222222-2222-4222-8222-222222222222",
-    surname: "Reed",
-    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    surname: "Dunmerrow",
+    id: studentId,
   });
 
   const invalidQueries = [
@@ -101,9 +127,11 @@ test("rejects invalid parameters without querying", async (context) => {
     "organisationId=anything",
     "cursor=",
     "cursor=invalid",
-    "cursor=e30",
-    `cursor=${"a".repeat(8193)}`,
-    `cursor=${foreignCursor}`,
+    `cursor=${"a".repeat(MAX_CURSOR_LENGTH + 1)}`,
+    `cursor=${validToken}&cursor=${validToken}`,
+    `cursor=${tamperedToken}`,
+    `cursor=${otherKeyToken}`,
+    `cursor=${foreignOrganisationToken}`,
   ];
 
   for (const query of invalidQueries) {
@@ -118,15 +146,35 @@ test("rejects invalid parameters without querying", async (context) => {
   assert.equal(calls, 0);
 });
 
-test("returns 503 without exposing database errors", async (context) => {
-  const url = await startServer(context, async () => {
-    throw new Error("Private database failure details");
+test("returns 503 and logs only safe failure details", async (context) => {
+  const { url, entries } = await startServer(context, async () => {
+    throw Object.assign(new Error("Private database failure for Dunmerrow"), {
+      name: "PrismaClientKnownRequestError",
+      code: "P1001",
+      meta: {
+        driverAdapterError: {
+          cause: { kind: "DatabaseNotReachable", host: "10.0.0.5" },
+        },
+      },
+    });
   });
 
-  const response = await fetch(url);
+  const response = await fetch(`${url}?limit=5`);
 
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {
     error: "Student directory unavailable",
   });
+
+  assert.deepEqual(entries, [{
+    level: "error",
+    event: "students.list_failed",
+    fields: {
+      requestId: "test-request-id",
+      errorName: "PrismaClientKnownRequestError",
+      errorCode: "P1001",
+      adapterKind: "DatabaseNotReachable",
+      sqlState: undefined,
+    },
+  }]);
 });

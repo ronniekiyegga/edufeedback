@@ -23,7 +23,7 @@ model Student {
   organisationId        String   @map("organisation_id") @db.Uuid
   institutionStudentRef String   @map("institution_student_ref")
   firstName             String?  @map("first_name")
-  surname               String
+  surname               String   @db.VarChar(100)
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 

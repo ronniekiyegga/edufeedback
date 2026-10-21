@@ -1,49 +1,23 @@
 import { z } from "zod";
+import { MAX_CURSOR_LENGTH, type StudentCursorCodec } from "./student.cursor.js";
 
-const cursorSchema = z.strictObject({
-  version: z.literal(1),
-  organisationId: z.uuid(),
-  surname: z.string().min(1),
-  id: z.uuid(),
-});
+export function createStudentPaginationSchema(cursorCodec: StudentCursorCodec) {
+  return z.strictObject({
+    limit: z.string().trim().min(1)
+      .transform(Number)
+      .pipe(z.number().int().min(1).max(100))
+      .default(25),
+    cursor: z.string().min(1).max(MAX_CURSOR_LENGTH)
+      .transform((token, context) => {
+        const cursor = cursorCodec.decode(token);
 
-export type StudentCursor = z.infer<typeof cursorSchema>;
+        if (!cursor) {
+          context.addIssue({ code: "custom", message: "Invalid cursor" });
+          return z.NEVER;
+        }
 
-export function encodeStudentCursor(cursor: StudentCursor): string {
-  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
-}
-
-const encodedCursorSchema = z.string().min(1).max(8192)
-  .transform((value, context) => {
-    try {
-      const buffer = Buffer.from(value, "base64url");
-
-      if (buffer.toString("base64url") !== value) {
-        throw new Error("Invalid encoding");
-      }
-
-      const result = cursorSchema.safeParse(
-        JSON.parse(buffer.toString("utf8")),
-      );
-
-      if (result.success) {
-        return result.data;
-      }
-    } catch {
-    }
-
-    context.addIssue({
-      code: "custom",
-      message: "Invalid cursor",
-    });
-
-    return z.NEVER;
+        return cursor;
+      })
+      .optional(),
   });
-
-export const studentPaginationSchema = z.strictObject({
-  limit: z.string().trim().min(1)
-    .transform(Number)
-    .pipe(z.number().int().min(1).max(100))
-    .default(25),
-  cursor: encodedCursorSchema.optional(),
-});
+}
