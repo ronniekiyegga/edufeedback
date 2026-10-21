@@ -5,21 +5,13 @@ import express from "express";
 import { createStudentCursorCodec } from "../src/features/students/student.cursor.js";
 import { MAX_SURNAME_LENGTH } from "../src/features/students/student.limits.js";
 import { createStudentRouter } from "../src/features/students/student.routes.js";
+// Consumer-owned contract: the web app's response schema must accept what
+// this API actually returns from a real database.
+import { studentPageSchema } from "../../web/src/features/students/student-page.schema.js";
 import { listen, recordingLogger } from "./support/http.js";
 import { requireLocalTestDatabase } from "./support/test-database.js";
 
 requireLocalTestDatabase();
-
-type StudentPage = {
-  items: {
-    id: string;
-    institutionStudentRef: string;
-    firstName: string | null;
-    surname: string;
-  }[];
-  nextCursor: string | null;
-  limit: number;
-};
 
 const { database } = await import("../src/database.js");
 const { listStudents } = await import(
@@ -81,7 +73,7 @@ test("keyset pagination survives inserts and cursor deletion", async (context) =
     const response = await fetch(`${url}?${query}`);
     assert.equal(response.status, 200);
 
-    return (await response.json()) as StudentPage;
+    return studentPageSchema.parse(await response.json());
   }
 
   try {
@@ -187,7 +179,9 @@ test("a surname at the length limit still yields a usable cursor", async (contex
       ),
     });
 
-    const first = (await (await fetch(`${url}?limit=1`)).json()) as StudentPage;
+    const first = studentPageSchema.parse(
+      await (await fetch(`${url}?limit=1`)).json(),
+    );
     // The cursor must come from the boundary student, not the other one.
     assert.equal(first.items[0]?.surname, longestSurname);
     assert.ok(first.nextCursor);
@@ -195,7 +189,7 @@ test("a surname at the length limit still yields a usable cursor", async (contex
     const second = await fetch(`${url}?limit=1&cursor=${first.nextCursor}`);
     assert.equal(second.status, 200);
 
-    const page = (await second.json()) as StudentPage;
+    const page = studentPageSchema.parse(await second.json());
     assert.deepEqual(page.items.map((student) => student.surname), ["Zedwick"]);
   } finally {
     await removeOrganisations([organisationId]);

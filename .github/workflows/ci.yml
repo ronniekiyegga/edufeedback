@@ -76,3 +76,9 @@ jobs:
 
       - name: Build applications
         run: pnpm build
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @attainline/web exec playwright install --with-deps chromium
+
+      - name: Test web app in Chromium
+        run: pnpm --filter @attainline/web test:e2e
