@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Organisation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  students Student[]
+
+  @@map("organisations")
+}
+
+model Student {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organisationId        String   @map("organisation_id") @db.Uuid
+  institutionStudentRef String   @map("institution_student_ref")
+  firstName             String?  @map("first_name")
+  surname               String
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  enrolments StudentEnrolment[]
+
+  @@unique([organisationId, institutionStudentRef])
+  @@unique([organisationId, id])
+  @@index([organisationId, surname, id])
+  @@map("students")
+}
+
+model StudentEnrolment {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organisationId    String   @map("organisation_id") @db.Uuid
+  studentId         String   @map("student_id") @db.Uuid
+  academicYearStart Int      @map("academic_year_start")
+  yearGroup         Int      @map("year_group")
+  classGroup        String?  @map("class_group")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  student Student @relation(fields: [organisationId, studentId], references: [organisationId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([organisationId, studentId, academicYearStart])
+  @@index([organisationId, academicYearStart, yearGroup])
+  @@map("student_enrolments")
+}

@@ -43,5 +43,8 @@ jobs:
       - name: Check TypeScript
         run: pnpm typecheck
 
+      - name: Test API
+        run: pnpm --filter @attainline/api test
+
       - name: Build applications
         run: pnpm build

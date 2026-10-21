@@ -12,6 +12,8 @@ RUN pnpm install --frozen-lockfile
 
 COPY apps/api/tsconfig.json ./apps/api/tsconfig.json
 COPY apps/api/src ./apps/api/src
+COPY apps/api/prisma ./apps/api/prisma
+COPY apps/api/prisma.config.ts ./apps/api/prisma.config.ts
 
 RUN pnpm --filter @attainline/api build
 RUN pnpm --filter @attainline/api --prod deploy /output
