@@ -3,9 +3,13 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { after, test, type TestContext } from "node:test";
 import express from "express";
 import { createStudentCursorCodec } from "../src/features/students/student.cursor.js";
-import { MAX_SURNAME_LENGTH } from "../src/features/students/student.limits.js";
+import {
+  MAX_SEARCH_LENGTH,
+  MAX_SURNAME_LENGTH,
+} from "../src/features/students/student.limits.js";
 import { createStudentRouter } from "../src/features/students/student.routes.js";
 import { studentPageSchema } from "../../web/src/features/students/student-page.schema.js";
+import { MAX_SEARCH_LENGTH as WEB_MAX_SEARCH_LENGTH } from "../../web/src/features/students/student-search.schema.js";
 import { listen, recordingLogger } from "./support/http.js";
 import { requireLocalTestDatabase } from "./support/test-database.js";
 
@@ -275,5 +279,26 @@ test("searches literal text within one organisation and paginates matches", asyn
     assert.equal(noMatches.nextCursor, null);
   } finally {
     await removeOrganisations(organisationIds);
+  }
+});
+
+test("accepts the longest search the web form can submit", async (context) => {
+  assert.equal(WEB_MAX_SEARCH_LENGTH, MAX_SEARCH_LENGTH);
+
+  const organisationId = randomUUID();
+
+  try {
+    await database.organisation.create({
+      data: { id: organisationId, name: "Synthetic Search Limit Academy" },
+    });
+
+    const url = await startRouter(context, organisationId);
+    const longest = new URLSearchParams({ q: "x".repeat(WEB_MAX_SEARCH_LENGTH) });
+    const response = await fetch(`${url}?${longest}`);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(studentPageSchema.parse(await response.json()).items, []);
+  } finally {
+    await removeOrganisations([organisationId]);
   }
 });

@@ -95,7 +95,7 @@ test("every surname at the length limit fits the cursor limit", () => {
   };
   const boundaryToken = codec.encode(boundaryCursor);
 
-  assert.ok(boundaryToken.length <= MAX_CURSOR_LENGTH);
+  assert.equal(boundaryToken.length, MAX_CURSOR_LENGTH);
   assert.deepEqual(codec.decode(boundaryToken), boundaryCursor);
 });
 
