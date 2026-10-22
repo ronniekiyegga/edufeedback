@@ -14,7 +14,8 @@ Existing features are being reviewed and migrated individually.
   memberships.
 - Express API with separate HTTP liveness and database readiness endpoints.
 - Prisma schema and migrations for organisations, students and annual enrolments.
-- Student directory API with organisation scoping and encrypted keyset cursors.
+- Student directory API with organisation scoping, server-side search and
+  encrypted keyset cursors bound to the search.
 - Request IDs shared by the web app and API, and structured JSON failure logs.
 - API unit tests, PostgreSQL integration tests and Playwright browser tests.
 - pnpm workspace with TypeScript and one root lockfile.
@@ -157,6 +158,22 @@ cursors already issued.
 
 Invalid parameters and cursors return a generic 400. Query failures
 return 503.
+
+Search with `GET /students?q=Velmira&limit=25`.
+
+Search matches a partial first name, surname or student reference,
+case-insensitively. The trimmed term is limited to 100 characters.
+Changing the term starts a new pagination sequence: a cursor is only
+accepted with the search it was issued for.
+
+The browser search field submits the term explicitly. Pagination and
+retry links retain it; clearing the search returns to the directory.
+
+Search terms appear in URLs. This implementation is restricted to
+synthetic demo data.
+
+See [the search decision](docs/decisions/student-directory-search.md)
+for matching behaviour, pagination constraints and performance limits.
 
 Every response carries an `X-Request-Id` header. An incoming UUID is
 kept, so web and API log lines for one request share an ID. Failure

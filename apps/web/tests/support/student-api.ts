@@ -7,6 +7,7 @@ type Scenario = "populated" | "empty" | "unavailable";
 
 type ReceivedRequest = {
   limit: string | null;
+  q: string | null;
   cursor: string | null;
   requestId: string | null;
 };

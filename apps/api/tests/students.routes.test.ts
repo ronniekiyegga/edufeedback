@@ -20,7 +20,6 @@ async function startServer(context: TestContext, queryStudents: StudentQuery) {
   const { logger, entries } = recordingLogger();
   const app = express();
 
-  // The router reads the request ID set by the app-level middleware.
   app.use((_request, response, next) => {
     response.locals.requestId = "test-request-id";
     next();
@@ -177,4 +176,101 @@ test("returns 503 and logs only safe failure details", async (context) => {
       sqlState: undefined,
     },
   }]);
+});
+
+test("passes trimmed search to the organisation-scoped query", async (context) => {
+  let calls = 0;
+
+  const { url } = await startServer(context, async (options) => {
+    calls++;
+    assert.deepEqual(options, {
+      organisationId,
+      limit: 25,
+      after: undefined,
+      search: "Dunmerrow",
+    });
+    return { items: [], next: null };
+  });
+
+  const query = new URLSearchParams({ q: "  Dunmerrow  " });
+  const response = await fetch(`${url}?${query}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(calls, 1);
+});
+
+test("treats a blank search as no search", async (context) => {
+  const { url } = await startServer(context, async (options) => {
+    assert.deepEqual(options, { organisationId, limit: 25, after: undefined });
+    return { items: [], next: null };
+  });
+
+  assert.equal((await fetch(`${url}?q=%20%20`)).status, 200);
+});
+
+test("binds continuation cursors to their search", async (context) => {
+  const searches: (string | undefined)[] = [];
+
+  const { url } = await startServer(context, async ({ search }) => {
+    searches.push(search);
+    return {
+      items: [{
+        id: studentId,
+        institutionStudentRef: "SYNTHETIC-001",
+        firstName: null,
+        surname: "Dunmerrow",
+      }],
+      next: { surname: "Dunmerrow", id: studentId },
+    };
+  });
+
+  const firstResponse = await fetch(`${url}?q=Dunmerrow&limit=1`);
+  assert.equal(firstResponse.status, 200);
+
+  const first = await firstResponse.json();
+  assert.equal(typeof first.nextCursor, "string");
+
+  const matching = new URLSearchParams({
+    q: "Dunmerrow",
+    limit: "1",
+    cursor: first.nextCursor,
+  });
+  assert.equal((await fetch(`${url}?${matching}`)).status, 200);
+
+  const changed = new URLSearchParams({ q: "Another", cursor: first.nextCursor });
+  assert.equal((await fetch(`${url}?${changed}`)).status, 400);
+
+  const missing = new URLSearchParams({ cursor: first.nextCursor });
+  assert.equal((await fetch(`${url}?${missing}`)).status, 400);
+
+  const unfiltered = cursorCodec.encode({
+    organisationId,
+    surname: "Dunmerrow",
+    id: studentId,
+  });
+  const smuggled = new URLSearchParams({ q: "Dunmerrow", cursor: unfiltered });
+  assert.equal((await fetch(`${url}?${smuggled}`)).status, 400);
+
+  assert.deepEqual(searches, ["Dunmerrow", "Dunmerrow"]);
+});
+
+test("rejects invalid search parameters before querying", async (context) => {
+  let calls = 0;
+
+  const { url } = await startServer(context, async () => {
+    calls++;
+    return { items: [], next: null };
+  });
+
+  const invalidQueries = [
+    "q=one&q=two",
+    new URLSearchParams({ q: "x".repeat(101) }).toString(),
+  ];
+
+  for (const query of invalidQueries) {
+    const response = await fetch(`${url}?${query}`);
+    assert.equal(response.status, 400, query);
+  }
+
+  assert.equal(calls, 0);
 });
