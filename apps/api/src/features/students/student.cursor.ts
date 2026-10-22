@@ -5,7 +5,12 @@ import {
   randomBytes,
 } from "node:crypto";
 import { z } from "zod";
-import { MAX_SURNAME_LENGTH, surnameLength } from "./student.limits.js";
+import {
+  MAX_ACADEMIC_YEAR_START,
+  MAX_SURNAME_LENGTH,
+  MIN_ACADEMIC_YEAR_START,
+  surnameLength,
+} from "./student.limits.js";
 
 const ALGORITHM = "aes-256-gcm";
 const TOKEN_VERSION = 1;
@@ -23,6 +28,7 @@ const MAX_PAYLOAD_BYTES =
       organisationId: NIL_UUID,
       surname: "",
       id: NIL_UUID,
+      academicYearStart: MAX_ACADEMIC_YEAR_START,
       searchHash: "0".repeat(SEARCH_HASH_LENGTH),
     }),
   ) + MAX_SURNAME_LENGTH * MAX_JSON_BYTES_PER_CODE_POINT;
@@ -37,6 +43,9 @@ const cursorPayloadSchema = z.strictObject({
     (surname) => surnameLength(surname) <= MAX_SURNAME_LENGTH,
   ),
   id: z.uuid(),
+  academicYearStart: z.number().int()
+    .min(MIN_ACADEMIC_YEAR_START)
+    .max(MAX_ACADEMIC_YEAR_START),
   searchHash: z.string().length(SEARCH_HASH_LENGTH).optional(),
 });
 

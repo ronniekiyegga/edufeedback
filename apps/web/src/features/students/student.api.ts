@@ -2,18 +2,29 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { connection } from "next/server";
 import { z } from "zod";
-import { studentPageSchema, type StudentPage } from "./student-page.schema";
+import {
+  academicYearsSchema,
+  studentPageSchema,
+  type StudentPage,
+} from "./student-page.schema";
 
 const PAGE_SIZE = "25";
 
 const REQUEST_TIMEOUT_MS = 25_000;
 
+type ApiResult<T> =
+  | { status: "success"; data: T }
+  | { status: "rejected" }
+  | { status: "unavailable" };
+
+export type AcademicYearsResult =
+  | { status: "success"; data: number[] }
+  | { status: "unavailable" };
+
 export type StudentPageResult =
   | { status: "success"; data: StudentPage }
   | { status: "invalid-cursor" }
   | { status: "unavailable" };
-
-const unavailable: StudentPageResult = { status: "unavailable" };
 
 type FailureReason =
   | "not-configured"
@@ -49,15 +60,12 @@ function describeFetchError(error: unknown) {
   } as const;
 }
 
-type StudentPageQuery = {
-  cursor?: string;
-  search?: string;
-};
-
-export async function getStudents({
-  cursor,
-  search,
-}: StudentPageQuery = {}): Promise<StudentPageResult> {
+async function requestStudentApi<T>(
+  path: string,
+  parameters: Record<string, string | undefined>,
+  schema: z.ZodType<T>,
+  { expectRejection }: { expectRejection: boolean },
+): Promise<ApiResult<T>> {
   await connection();
 
   const apiUrl = process.env.ATTAINLINE_API_URL;
@@ -65,7 +73,7 @@ export async function getStudents({
 
   if (!apiUrl || !URL.canParse(apiUrl)) {
     logFailure({ requestId, reason: "not-configured" });
-    return unavailable;
+    return { status: "unavailable" };
   }
 
   const baseUrl = new URL(apiUrl);
@@ -77,15 +85,12 @@ export async function getStudents({
   baseUrl.search = "";
   baseUrl.hash = "";
 
-  const url = new URL("students", baseUrl);
-  url.searchParams.set("limit", PAGE_SIZE);
+  const url = new URL(path, baseUrl);
 
-  if (search) {
-    url.searchParams.set("q", search);
-  }
-
-  if (cursor) {
-    url.searchParams.set("cursor", cursor);
+  for (const [name, value] of Object.entries(parameters)) {
+    if (value) {
+      url.searchParams.set(name, value);
+    }
   }
 
   let response: Response;
@@ -98,26 +103,63 @@ export async function getStudents({
     });
   } catch (error) {
     logFailure({ requestId, ...describeFetchError(error) });
-    return unavailable;
+    return { status: "unavailable" };
   }
 
-  if (response.status === 400 && cursor) {
-    return { status: "invalid-cursor" };
+  if (response.status === 400 && expectRejection) {
+    return { status: "rejected" };
   }
 
   if (!response.ok) {
     logFailure({ requestId, reason: "http-status", status: response.status });
-    return unavailable;
+    return { status: "unavailable" };
   }
 
-  const page = studentPageSchema.safeParse(
-    await response.json().catch(() => undefined),
+  const body = schema.safeParse(await response.json().catch(() => undefined));
+
+  if (!body.success) {
+    logFailure({ requestId, reason: "invalid-response" });
+    return { status: "unavailable" };
+  }
+
+  return { status: "success", data: body.data };
+}
+
+export async function getAcademicYears(): Promise<AcademicYearsResult> {
+  const result = await requestStudentApi(
+    "students/academic-years",
+    {},
+    academicYearsSchema,
+    { expectRejection: false },
   );
 
-  if (!page.success) {
-    logFailure({ requestId, reason: "invalid-response" });
-    return unavailable;
-  }
+  return result.status === "success"
+    ? { status: "success", data: result.data.academicYearStarts }
+    : { status: "unavailable" };
+}
 
-  return { status: "success", data: page.data };
+type StudentPageQuery = {
+  academicYearStart: number;
+  cursor?: string;
+  search?: string;
+};
+
+export async function getStudents({
+  academicYearStart,
+  cursor,
+  search,
+}: StudentPageQuery): Promise<StudentPageResult> {
+  const result = await requestStudentApi(
+    "students",
+    {
+      academicYearStart: String(academicYearStart),
+      limit: PAGE_SIZE,
+      q: search,
+      cursor,
+    },
+    studentPageSchema,
+    { expectRejection: Boolean(cursor) },
+  );
+
+  return result.status === "rejected" ? { status: "invalid-cursor" } : result;
 }

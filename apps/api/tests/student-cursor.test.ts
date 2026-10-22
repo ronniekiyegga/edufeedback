@@ -7,12 +7,16 @@ import {
   parseStudentCursorKey,
   type StudentCursor,
 } from "../src/features/students/student.cursor.js";
-import { MAX_SURNAME_LENGTH } from "../src/features/students/student.limits.js";
+import {
+  MAX_ACADEMIC_YEAR_START,
+  MAX_SURNAME_LENGTH,
+} from "../src/features/students/student.limits.js";
 
 const cursor: StudentCursor = {
   organisationId: "11111111-1111-4111-8111-111111111111",
   surname: "Dunmerrow",
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  academicYearStart: 2026,
 };
 
 const codec = createStudentCursorCodec(randomBytes(32));
@@ -91,6 +95,7 @@ test("every surname at the length limit fits the cursor limit", () => {
   const boundaryCursor = {
     ...cursor,
     surname: longest.controlCharacters,
+    academicYearStart: MAX_ACADEMIC_YEAR_START,
     searchHash: "0".repeat(64),
   };
   const boundaryToken = codec.encode(boundaryCursor);
@@ -106,9 +111,16 @@ test("rejects a payload surname beyond the length limit", () => {
 });
 
 test("rejects an authentic token whose payload is not a cursor", () => {
-  const invalidPayload = { ...cursor, id: "not-a-uuid" };
+  const { academicYearStart: _omitted, ...withoutYear } = cursor;
+  const invalidPayloads = [
+    { ...cursor, id: "not-a-uuid" },
+    { ...cursor, academicYearStart: MAX_ACADEMIC_YEAR_START + 1 },
+    withoutYear,
+  ];
 
-  assert.equal(codec.decode(codec.encode(invalidPayload)), null);
+  for (const payload of invalidPayloads) {
+    assert.equal(codec.decode(codec.encode(payload as StudentCursor)), null);
+  }
 });
 
 test("accepts only a canonical base64 32-byte key", () => {

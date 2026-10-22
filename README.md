@@ -14,8 +14,9 @@ Existing features are being reviewed and migrated individually.
   memberships.
 - Express API with separate HTTP liveness and database readiness endpoints.
 - Prisma schema and migrations for organisations, students and annual enrolments.
-- Student directory API with organisation scoping, server-side search and
-  encrypted keyset cursors bound to the search.
+- Student directory API with organisation scoping, academic-year
+  placement (year group and class), server-side search and encrypted keyset
+  cursors bound to the year and search.
 - Request IDs shared by the web app and API, and structured JSON failure logs.
 - API unit tests, PostgreSQL integration tests and Playwright browser tests.
 - pnpm workspace with TypeScript and one root lockfile.
@@ -132,8 +133,15 @@ production package dependencies. Its healthcheck verifies HTTP liveness.
 
 ## Student directory API
 
-`GET /students?limit=25` returns directory fields for the organisation
-configured by `DEMO_ORGANISATION_ID`.
+`GET /students/academic-years` returns `academicYearStarts`: the academic
+years in which the organisation configured by `DEMO_ORGANISATION_ID` has
+enrolments, newest first. An organisation without enrolments returns an
+empty list.
+
+`GET /students?academicYearStart=2026&limit=25` returns the students
+enrolled in that academic year. `academicYearStart` is required. Each item
+contains `id`, `institutionStudentRef`, `firstName`, `surname`, and that
+year's `yearGroup` and `classGroup` (null when no class is recorded).
 
 Responses contain `items`, `nextCursor` and `limit`. Request the next
 page by passing the returned cursor as the `cursor` query parameter.
@@ -161,21 +169,25 @@ cursors already issued.
 Invalid parameters and cursors return a generic 400. Query failures
 return 503.
 
-Search with `GET /students?q=Velmira&limit=25`.
+Search with `GET /students?academicYearStart=2026&q=Velmira&limit=25`.
 
 Search matches a partial first name, surname or student reference,
 case-insensitively. The trimmed term is limited to 100 characters.
-Changing the term starts a new pagination sequence: a cursor is only
-accepted with the search it was issued for.
+Changing the year or the term starts a new pagination sequence: a cursor
+is only accepted with the academic year and search it was issued for.
 
-The browser search field submits the term explicitly. Pagination and
-retry links retain it; clearing the search returns to the directory.
+The directory page shows the newest academic year by default, with tabs
+for the others. The search field submits the term explicitly. Pagination,
+refresh and retry keep both the year and the search; choosing another year
+keeps the search, and clearing the search keeps the year.
 
 Search terms appear in URLs. This implementation is restricted to
 synthetic demo data.
 
 See [the search decision](docs/decisions/student-directory-search.md)
-for matching behaviour, pagination constraints and performance limits.
+for matching behaviour, pagination constraints and performance limits, and
+[the annual placement decision](docs/decisions/student-directory-annual-placement.md)
+for how the year is chosen and what placement does not cover.
 
 Every response carries an `X-Request-Id` header. An incoming UUID is
 kept, so web and API log lines for one request share an ID. Failure
