@@ -53,6 +53,8 @@ valid key.
 
 The web app reads the API location from `ATTAINLINE_API_URL`, for example
 `ATTAINLINE_API_URL=http://localhost:4100` in `apps/web/.env.local`.
+A path in that URL is kept as a prefix, so `http://host/api` requests
+`http://host/api/students`; any query string or fragment is ignored.
 
 For local PostgreSQL:
 
@@ -213,10 +215,10 @@ integration test parses real responses with it, and a stand-in response
 that failed it would show the unavailable state and fail the populated
 browser tests.
 
-That contract check imports the web app's schema file from the API's
-integration test only. API source cannot import outside `apps/api/src`
-(`rootDir` in its `tsconfig.json`), and the API's build and Docker image
-contain no web code.
+That contract check imports the web app's response schema and search
+limit from the API's integration test only. API source cannot import
+outside `apps/api/src` (`rootDir` in its `tsconfig.json`), and the API's
+build and Docker image contain no web code.
 
 The stand-in API keeps one global scenario and request log, so Playwright
 runs with a single worker. Running tests in parallel would need
