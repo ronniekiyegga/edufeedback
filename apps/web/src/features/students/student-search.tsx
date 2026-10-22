@@ -1,19 +1,22 @@
 import { Search } from "lucide-react";
+import { toolbarControlClass } from "./directory-link";
 import { MAX_SEARCH_LENGTH } from "./student-search.schema";
 
 type StudentSearchProps = {
   search: string;
+  year: number;
 };
 
-export function StudentSearch({ search }: StudentSearchProps) {
+export function StudentSearch({ search, year }: StudentSearchProps) {
   return (
     <form
       action="/"
       method="get"
       role="search"
       aria-label="Student directory"
-      className="flex w-full flex-wrap items-center gap-2 md:w-auto"
+      className="flex w-full flex-wrap items-center justify-end gap-2 md:w-auto"
     >
+      <input type="hidden" name="year" value={year} />
       <div className="relative flex w-full md:w-auto md:min-w-0">
         <Search
           aria-hidden="true"
@@ -35,10 +38,7 @@ export function StudentSearch({ search }: StudentSearchProps) {
         />
       </div>
 
-      <button
-        type="submit"
-        className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-      >
+      <button type="submit" className={toolbarControlClass}>
         Search
       </button>
     </form>

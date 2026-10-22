@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { StudentDirectory } from "@/features/students/student-directory";
+import { StudentTableSkeleton } from "@/features/students/student-table";
 
 type HomeProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -16,20 +17,14 @@ export default function Home({ searchParams }: HomeProps) {
           Student directory
         </h1>
         <p className="mt-3 max-w-xl text-slate-600">
-          Browse student names and school references.
+          Browse students by academic year, with their year group and class.
         </p>
         <p className="mt-2 text-sm text-slate-500">
           Demo workspace · Synthetic data only
         </p>
       </header>
 
-      <Suspense
-        fallback={
-          <p role="status" className="py-8 text-slate-600">
-            Loading students…
-          </p>
-        }
-      >
+      <Suspense fallback={<StudentTableSkeleton />}>
         <StudentDirectory searchParams={searchParams} />
       </Suspense>
     </div>

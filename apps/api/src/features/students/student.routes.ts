@@ -3,11 +3,15 @@ import { describeDatabaseError } from "../../database-errors.js";
 import type { Logger } from "../../logger.js";
 import { searchHash, type StudentCursorCodec } from "./student.cursor.js";
 import { createStudentPaginationSchema } from "./student.pagination.js";
-import type { listStudents } from "./student.repository.js";
+import type {
+  listAcademicYearStarts,
+  listStudents,
+} from "./student.repository.js";
 
 type StudentRouterDependencies = {
   organisationId: string;
   queryStudents: typeof listStudents;
+  queryAcademicYearStarts: typeof listAcademicYearStarts;
   cursorCodec: StudentCursorCodec;
   logger: Logger;
 };
@@ -19,11 +23,42 @@ function rejectPagination(response: Response) {
 export function createStudentRouter({
   organisationId,
   queryStudents,
+  queryAcademicYearStarts,
   cursorCodec,
   logger,
 }: StudentRouterDependencies) {
   const router = Router();
   const paginationSchema = createStudentPaginationSchema(cursorCodec);
+
+  function respondUnavailable(
+    response: Response,
+    event: string,
+    error: unknown,
+  ) {
+    logger.error(event, {
+      requestId: response.locals.requestId,
+      ...describeDatabaseError(error),
+    });
+    response.status(503).json({
+      error: "Student directory unavailable",
+    });
+  }
+
+  router.get("/academic-years", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+
+    if (Object.keys(request.query).length > 0) {
+      rejectPagination(response);
+      return;
+    }
+
+    try {
+      const academicYearStarts = await queryAcademicYearStarts(organisationId);
+      response.json({ academicYearStarts });
+    } catch (error) {
+      respondUnavailable(response, "students.academic_years_failed", error);
+    }
+  });
 
   router.get("/", async (request, response) => {
     response.set("Cache-Control", "no-store");
@@ -35,13 +70,14 @@ export function createStudentRouter({
       return;
     }
 
-    const { limit, cursor, q } = pagination.data;
+    const { academicYearStart, limit, cursor, q } = pagination.data;
     const search = q || undefined;
     const expectedSearchHash = searchHash(search);
 
     if (
       cursor &&
       (cursor.organisationId !== organisationId ||
+        cursor.academicYearStart !== academicYearStart ||
         cursor.searchHash !== expectedSearchHash)
     ) {
       rejectPagination(response);
@@ -51,6 +87,7 @@ export function createStudentRouter({
     try {
       const page = await queryStudents({
         organisationId,
+        academicYearStart,
         limit,
         after: cursor && { surname: cursor.surname, id: cursor.id },
         ...(search && { search }),
@@ -59,6 +96,7 @@ export function createStudentRouter({
       const nextCursor = page.next
         ? cursorCodec.encode({
             organisationId,
+            academicYearStart,
             ...page.next,
             ...(expectedSearchHash && { searchHash: expectedSearchHash }),
           })
@@ -66,13 +104,7 @@ export function createStudentRouter({
 
       response.json({ items: page.items, nextCursor, limit });
     } catch (error) {
-      logger.error("students.list_failed", {
-        requestId: response.locals.requestId,
-        ...describeDatabaseError(error),
-      });
-      response.status(503).json({
-        error: "Student directory unavailable",
-      });
+      respondUnavailable(response, "students.list_failed", error);
     }
   });
 

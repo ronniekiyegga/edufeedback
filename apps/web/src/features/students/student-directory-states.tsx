@@ -1,7 +1,12 @@
 import { DirectoryLink, directoryHref } from "./directory-link";
 import { MAX_SEARCH_LENGTH } from "./student-search.schema";
 
-export function InvalidCursor({ search }: { search?: string }) {
+type DirectoryFilters = {
+  year?: number;
+  search?: string;
+};
+
+export function InvalidCursor({ year, search }: DirectoryFilters) {
   return (
     <section aria-labelledby="invalid-page-title" className="space-y-4">
       <h2 id="invalid-page-title" className="text-lg font-semibold">
@@ -10,7 +15,7 @@ export function InvalidCursor({ search }: { search?: string }) {
       <p className="text-slate-600">
         Return to the beginning of the student directory.
       </p>
-      <DirectoryLink href={directoryHref({ search })}>
+      <DirectoryLink href={directoryHref({ year, search })}>
         Back to first page
       </DirectoryLink>
     </section>
@@ -31,13 +36,43 @@ export function InvalidSearch() {
   );
 }
 
+export function InvalidAcademicYear({ search }: Pick<DirectoryFilters, "search">) {
+  return (
+    <section aria-labelledby="invalid-year-title" className="space-y-4">
+      <h2 id="invalid-year-title" className="text-lg font-semibold">
+        This academic year isn’t available
+      </h2>
+      <p className="text-slate-600">
+        Choose one of the academic years with enrolled students.
+      </p>
+      <DirectoryLink href={directoryHref({ search })}>
+        Back to latest year
+      </DirectoryLink>
+    </section>
+  );
+}
+
+export function NoEnrolments() {
+  return (
+    <section
+      aria-labelledby="no-enrolments-title"
+      className="rounded-lg border border-border bg-white p-8"
+    >
+      <h2 id="no-enrolments-title" className="text-lg font-semibold">
+        No enrolments yet
+      </h2>
+      <p className="mt-2 text-slate-600">
+        Students will appear here once they are enrolled in an academic year.
+      </p>
+    </section>
+  );
+}
+
 export function DirectoryUnavailable({
-  cursor,
+  year,
   search,
-}: {
-  cursor?: string;
-  search?: string;
-}) {
+  cursor,
+}: DirectoryFilters & { cursor?: string }) {
   return (
     <section aria-labelledby="unavailable-title" className="space-y-4">
       <h2 id="unavailable-title" className="text-lg font-semibold">
@@ -46,41 +81,9 @@ export function DirectoryUnavailable({
       <p className="text-slate-600">
         Student information is temporarily unavailable. Try again.
       </p>
-      <DirectoryLink href={directoryHref({ cursor, search })}>
+      <DirectoryLink href={directoryHref({ year, search, cursor })}>
         Try again
       </DirectoryLink>
-    </section>
-  );
-}
-
-export function EmptyDirectory({
-  isFirstPage,
-  isSearching = false,
-}: {
-  isFirstPage: boolean;
-  isSearching?: boolean;
-}) {
-  const title = !isFirstPage
-    ? "No students on this page"
-    : isSearching
-      ? "No matching students"
-      : "No students yet";
-
-  const description = !isFirstPage
-    ? "The directory may have changed. Return to the first page."
-    : isSearching
-      ? "Try a different first name, surname or student reference."
-      : "Students will appear here when demo records are available.";
-
-  return (
-    <section
-      aria-labelledby="empty-title"
-      className="rounded-lg border border-border bg-white p-8"
-    >
-      <h2 id="empty-title" className="text-lg font-semibold">
-        {title}
-      </h2>
-      <p className="mt-2 text-slate-600">{description}</p>
     </section>
   );
 }
