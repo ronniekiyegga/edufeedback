@@ -1,29 +1,30 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import { z } from "zod";
 import { MAX_SURNAME_LENGTH, surnameLength } from "./student.limits.js";
 
-// Token layout, base64url encoded:
-//   version (1 byte) | nonce (12 bytes) | ciphertext | auth tag (16 bytes)
-// AES-256-GCM hides the surname and ID from URLs and logs, and rejects any
-// altered token. The version byte is authenticated as additional data.
-//
-// Encryption is not authorisation: callers still scope every query to the
-// requester's organisation. Rotating the key invalidates issued cursors.
 const ALGORITHM = "aes-256-gcm";
 const TOKEN_VERSION = 1;
 const KEY_BYTES = 32;
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const HEADER = Buffer.from([TOKEN_VERSION]);
+const SEARCH_HASH_LENGTH = 64;
 
-// JSON.stringify writes at most 6 bytes per code point (a \u00XX escape for
-// control characters), so this is the longest payload any stored surname
-// can produce. Every cursor the API issues therefore fits the limit below.
 const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 const MAX_JSON_BYTES_PER_CODE_POINT = 6;
 const MAX_PAYLOAD_BYTES =
   Buffer.byteLength(
-    JSON.stringify({ organisationId: NIL_UUID, surname: "", id: NIL_UUID }),
+    JSON.stringify({
+      organisationId: NIL_UUID,
+      surname: "",
+      id: NIL_UUID,
+      searchHash: "0".repeat(SEARCH_HASH_LENGTH),
+    }),
   ) + MAX_SURNAME_LENGTH * MAX_JSON_BYTES_PER_CODE_POINT;
 
 export const MAX_CURSOR_LENGTH = Math.ceil(
@@ -36,6 +37,7 @@ const cursorPayloadSchema = z.strictObject({
     (surname) => surnameLength(surname) <= MAX_SURNAME_LENGTH,
   ),
   id: z.uuid(),
+  searchHash: z.string().length(SEARCH_HASH_LENGTH).optional(),
 });
 
 export type StudentCursor = z.infer<typeof cursorPayloadSchema>;
@@ -45,11 +47,15 @@ export type StudentCursorCodec = {
   decode(token: string): StudentCursor | null;
 };
 
+export function searchHash(search: string | undefined): string | undefined {
+  return search
+    ? createHash("sha256").update(search).digest("hex")
+    : undefined;
+}
+
 export function parseStudentCursorKey(value: string | undefined): Buffer {
   const key = Buffer.from(value ?? "", "base64");
 
-  // Buffer.from skips invalid characters, so re-encoding proves the input
-  // was canonical base64 rather than a truncated or padded variant.
   if (key.length !== KEY_BYTES || key.toString("base64") !== value) {
     throw new Error(
       `STUDENT_CURSOR_KEY must be ${KEY_BYTES} random bytes encoded as base64`,
@@ -120,8 +126,6 @@ export function createStudentCursorCodec(key: Buffer): StudentCursorCodec {
         const payload = cursorPayloadSchema.safeParse(JSON.parse(plaintext));
         return payload.success ? payload.data : null;
       } catch {
-        // final() throws when authentication fails and JSON.parse throws on
-        // a malformed payload; both mean the token is not one we issued.
         return null;
       }
     },

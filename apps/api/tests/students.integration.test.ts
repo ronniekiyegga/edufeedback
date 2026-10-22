@@ -5,8 +5,6 @@ import express from "express";
 import { createStudentCursorCodec } from "../src/features/students/student.cursor.js";
 import { MAX_SURNAME_LENGTH } from "../src/features/students/student.limits.js";
 import { createStudentRouter } from "../src/features/students/student.routes.js";
-// Consumer-owned contract: the web app's response schema must accept what
-// this API actually returns from a real database.
 import { studentPageSchema } from "../../web/src/features/students/student-page.schema.js";
 import { listen, recordingLogger } from "./support/http.js";
 import { requireLocalTestDatabase } from "./support/test-database.js";
@@ -92,7 +90,6 @@ test("keyset pagination survives inserts and cursor deletion", async (context) =
           institutionStudentRef: "TEST-001",
           surname: "Alpha",
         },
-        // Equal surnames: order falls back to ID.
         ...dunmerrowIds.map((id, index) => ({
           id,
           organisationId: organisationA,
@@ -118,7 +115,6 @@ test("keyset pagination survives inserts and cursor deletion", async (context) =
     }]);
     assert.ok(firstPage.nextCursor);
 
-    // Inserted before the cursor position, so it must not appear later.
     await database.student.create({
       data: {
         organisationId: organisationA,
@@ -133,7 +129,6 @@ test("keyset pagination survives inserts and cursor deletion", async (context) =
       dunmerrowIds[0],
     ]);
 
-    // The cursor stores the key, so deleting its row does not break paging.
     await database.student.delete({ where: { id: alphaId } });
 
     const afterDelete = await getPage(firstPage.nextCursor);
@@ -166,7 +161,6 @@ test("a surname at the length limit still yields a usable cursor", async (contex
       data: { id: organisationId, name: "Synthetic Test Boundary" },
     });
 
-    // Control characters take the most cursor space per character.
     const longestSurname = "\u0001".repeat(MAX_SURNAME_LENGTH);
 
     await database.student.createMany({
@@ -182,7 +176,6 @@ test("a surname at the length limit still yields a usable cursor", async (contex
     const first = studentPageSchema.parse(
       await (await fetch(`${url}?limit=1`)).json(),
     );
-    // The cursor must come from the boundary student, not the other one.
     assert.equal(first.items[0]?.surname, longestSurname);
     assert.ok(first.nextCursor);
 
@@ -193,5 +186,94 @@ test("a surname at the length limit still yields a usable cursor", async (contex
     assert.deepEqual(page.items.map((student) => student.surname), ["Zedwick"]);
   } finally {
     await removeOrganisations([organisationId]);
+  }
+});
+
+test("searches literal text within one organisation and paginates matches", async (context) => {
+  const organisationId = randomUUID();
+  const otherOrganisationId = randomUUID();
+  const organisationIds = [organisationId, otherOrganisationId];
+
+  try {
+    await database.organisation.createMany({
+      data: [
+        { id: organisationId, name: "Synthetic Search Academy" },
+        { id: otherOrganisationId, name: "Synthetic Search College" },
+      ],
+    });
+
+    await database.student.createMany({
+      data: [
+        {
+          organisationId,
+          institutionStudentRef: "SEARCH-001",
+          firstName: "Velmira",
+          surname: "Amberfen",
+        },
+        {
+          organisationId,
+          institutionStudentRef: "SEARCH-002",
+          firstName: null,
+          surname: "Velmira",
+        },
+        {
+          organisationId,
+          institutionStudentRef: "DEMO_%\\-003",
+          firstName: null,
+          surname: "Zorrenvale",
+        },
+        {
+          organisationId: otherOrganisationId,
+          institutionStudentRef: "SEARCH-FOREIGN",
+          firstName: "Velmira",
+          surname: "Aardwick",
+        },
+      ],
+    });
+
+    const url = await startRouter(context, organisationId);
+
+    async function getSearchPage(search: string, cursor?: string) {
+      const query = new URLSearchParams({ q: search, limit: "1" });
+      if (cursor) query.set("cursor", cursor);
+
+      const response = await fetch(`${url}?${query}`);
+      assert.equal(response.status, 200);
+
+      return studentPageSchema.parse(await response.json());
+    }
+
+    const first = await getSearchPage("vELmIRA");
+
+    assert.deepEqual(
+      first.items.map((student) => student.institutionStudentRef),
+      ["SEARCH-001"],
+    );
+    assert.ok(first.nextCursor);
+
+    const second = await getSearchPage("vELmIRA", first.nextCursor);
+
+    assert.deepEqual(
+      second.items.map((student) => student.institutionStudentRef),
+      ["SEARCH-002"],
+    );
+    assert.equal(second.nextCursor, null);
+
+    for (const literal of ["%", "_", "\\", "DEMO_%\\-003"]) {
+      const page = await getSearchPage(literal);
+
+      assert.deepEqual(
+        page.items.map((student) => student.institutionStudentRef),
+        ["DEMO_%\\-003"],
+        literal,
+      );
+      assert.equal(page.nextCursor, null);
+    }
+
+    const noMatches = await getSearchPage("AbsentSyntheticValue");
+    assert.deepEqual(noMatches.items, []);
+    assert.equal(noMatches.nextCursor, null);
+  } finally {
+    await removeOrganisations(organisationIds);
   }
 });

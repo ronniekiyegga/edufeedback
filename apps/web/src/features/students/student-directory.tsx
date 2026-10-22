@@ -1,10 +1,13 @@
 import { DirectoryLink, directoryHref } from "./directory-link";
-import { getStudents } from "./student.api";
+import { getStudents, type StudentPageResult } from "./student.api";
 import {
   DirectoryUnavailable,
   EmptyDirectory,
   InvalidCursor,
+  InvalidSearch,
 } from "./student-directory-states";
+import { StudentSearch } from "./student-search";
+import { studentSearchSchema } from "./student-search.schema";
 import { StudentTable } from "./student-table";
 
 type StudentDirectoryProps = {
@@ -12,27 +15,55 @@ type StudentDirectoryProps = {
 };
 
 export async function StudentDirectory({ searchParams }: StudentDirectoryProps) {
-  const { cursor } = await searchParams;
+  const parameters = await searchParams;
+  const parsedSearch = studentSearchSchema.safeParse(parameters.q);
 
-  // Repeated or empty cursor parameters cannot be a cursor the API issued.
-  if (cursor !== undefined && (typeof cursor !== "string" || cursor === "")) {
-    return <InvalidCursor />;
+  if (!parsedSearch.success) {
+    return <InvalidSearch />;
   }
 
-  const result = await getStudents(cursor);
+  const search = parsedSearch.data || undefined;
+  const { cursor } = parameters;
 
+  if (cursor !== undefined && (typeof cursor !== "string" || cursor === "")) {
+    return <InvalidCursor search={search} />;
+  }
+
+  const result = await getStudents({ cursor, search });
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <StudentSearch search={search ?? ""} />
+        {search && (
+          <DirectoryLink href={directoryHref()}>Clear search</DirectoryLink>
+        )}
+      </div>
+
+      <DirectoryResult result={result} cursor={cursor} search={search} />
+    </div>
+  );
+}
+
+type DirectoryResultProps = {
+  result: StudentPageResult;
+  cursor?: string;
+  search?: string;
+};
+
+function DirectoryResult({ result, cursor, search }: DirectoryResultProps) {
   if (result.status === "invalid-cursor") {
-    return <InvalidCursor />;
+    return <InvalidCursor search={search} />;
   }
 
   if (result.status === "unavailable") {
-    return <DirectoryUnavailable cursor={cursor} />;
+    return <DirectoryUnavailable cursor={cursor} search={search} />;
   }
 
   const { items, nextCursor } = result.data;
 
   return (
-    <div className="space-y-5">
+    <>
       {items.length > 0 ? (
         <>
           <p className="text-sm text-slate-600">
@@ -41,7 +72,7 @@ export async function StudentDirectory({ searchParams }: StudentDirectoryProps) 
           <StudentTable students={items} />
         </>
       ) : (
-        <EmptyDirectory isFirstPage={!cursor} />
+        <EmptyDirectory isFirstPage={!cursor} isSearching={Boolean(search)} />
       )}
 
       <nav
@@ -49,14 +80,14 @@ export async function StudentDirectory({ searchParams }: StudentDirectoryProps) 
         className="flex flex-wrap items-center justify-end gap-2 rounded-b-lg py-2"
       >
         {cursor && (
-          <DirectoryLink href={directoryHref()}>First page</DirectoryLink>
+          <DirectoryLink href={directoryHref({ search })}>First page</DirectoryLink>
         )}
         {nextCursor && (
-          <DirectoryLink href={directoryHref(nextCursor)} rel="next">
+          <DirectoryLink href={directoryHref({ cursor: nextCursor, search })} rel="next">
             Next page
           </DirectoryLink>
         )}
       </nav>
-    </div>
+    </>
   );
 }

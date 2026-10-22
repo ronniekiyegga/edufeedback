@@ -14,7 +14,12 @@ const scenarios = ["populated", "empty", "unavailable"] as const;
 type Scenario = (typeof scenarios)[number];
 
 let scenario: Scenario = "populated";
-let received: { limit: string | null; cursor: string | null; requestId: string | null }[] = [];
+let received: {
+  limit: string | null;
+  q: string | null;
+  cursor: string | null;
+  requestId: string | null;
+}[] = [];
 
 const students = [
   { id: "0a3f5c1e-1111-4111-8111-000000000001", institutionStudentRef: "DEMO-SYN-001", firstName: "Avery", surname: "Ashgrove" },
@@ -72,6 +77,7 @@ createServer((request, response) => {
   } else if (request.method === "GET" && first === "students") {
     received.push({
       limit: url.searchParams.get("limit"),
+      q: url.searchParams.get("q"),
       cursor: url.searchParams.get("cursor"),
       requestId: request.headers["x-request-id"]?.toString() ?? null,
     });

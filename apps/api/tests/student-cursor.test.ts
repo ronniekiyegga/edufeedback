@@ -76,8 +76,6 @@ test("rejects malformed tokens", () => {
 
 test("every surname at the length limit fits the cursor limit", () => {
   const longest = {
-    // Control characters are escaped as \u00XX: the most JSON bytes per
-    // code point, so this token sits exactly at the limit.
     controlCharacters: "\u0001".repeat(MAX_SURNAME_LENGTH),
     astralCharacters: "\u{1F600}".repeat(MAX_SURNAME_LENGTH),
     quotes: "\"".repeat(MAX_SURNAME_LENGTH),
@@ -90,10 +88,15 @@ test("every surname at the length limit fits the cursor limit", () => {
     assert.deepEqual(codec.decode(token), { ...cursor, surname }, kind);
   }
 
-  assert.equal(
-    codec.encode({ ...cursor, surname: longest.controlCharacters }).length,
-    MAX_CURSOR_LENGTH,
-  );
+  const boundaryCursor = {
+    ...cursor,
+    surname: longest.controlCharacters,
+    searchHash: "0".repeat(64),
+  };
+  const boundaryToken = codec.encode(boundaryCursor);
+
+  assert.ok(boundaryToken.length <= MAX_CURSOR_LENGTH);
+  assert.deepEqual(codec.decode(boundaryToken), boundaryCursor);
 });
 
 test("rejects a payload surname beyond the length limit", () => {

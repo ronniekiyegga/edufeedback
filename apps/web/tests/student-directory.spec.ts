@@ -31,8 +31,6 @@ test.describe("student directory", () => {
     await useScenario(request, "populated");
     await page.goto("/");
 
-    // Expanded sidebar state lives only in client memory, so it surviving
-    // pagination proves Link navigated without a full document reload.
     const trigger = page
       .locator("header")
       .getByRole("button", { name: "Toggle Sidebar" });
@@ -123,5 +121,96 @@ test.describe("student directory", () => {
     await page.getByRole("link", { name: "Try again" }).click();
 
     await expect(directoryRows(page)).toHaveText(["Avery Ashgrove", "Brackenridge"]);
+  });
+
+  test("submitting a search discards the previous cursor", async ({
+    page,
+    request,
+  }) => {
+    await useScenario(request, "populated");
+    await page.goto("/?cursor=page-2");
+
+    const search = page.getByRole("search", { name: "Student directory" });
+
+    await search.getByRole("searchbox").fill("Velmira");
+    await search.getByRole("button", { name: "Search", exact: true }).click();
+
+    await expect(page).toHaveURL("/?q=Velmira");
+    await expect(search.getByRole("searchbox")).toHaveValue("Velmira");
+    await expect(page.getByRole("link", { name: "First page" })).toHaveCount(0);
+
+    const requests = await receivedRequests(request);
+    expect(requests.at(-1)).toMatchObject({ q: "Velmira", cursor: null });
+  });
+
+  test("pagination preserves the search and clearing it resets the directory", async ({
+    page,
+    request,
+  }) => {
+    await useScenario(request, "populated");
+    await page.goto("/?q=Velmira");
+
+    await page.getByRole("link", { name: "Next page" }).click();
+    await expect(page).toHaveURL("/?q=Velmira&cursor=page-2");
+    await expect(directoryRows(page)).toHaveText(["Calla Cindermoor"]);
+
+    const requests = await receivedRequests(request);
+    expect(requests.at(-1)).toMatchObject({ q: "Velmira", cursor: "page-2" });
+
+    await page.getByRole("link", { name: "First page", exact: true }).click();
+    await expect(page).toHaveURL("/?q=Velmira");
+
+    await page.getByRole("link", { name: "Clear search" }).click();
+    await expect(page).toHaveURL("/");
+    await expect(page.getByRole("searchbox")).toHaveValue("");
+  });
+
+  test("distinguishes an empty search from an empty directory", async ({
+    page,
+    request,
+  }) => {
+    await useScenario(request, "empty");
+    await page.goto("/?q=AbsentSyntheticValue");
+
+    await expect(
+      page.getByRole("heading", { name: "No matching students" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No students yet" }))
+      .toHaveCount(0);
+
+    await page.getByRole("link", { name: "Clear search" }).click();
+
+    await expect(page.getByRole("heading", { name: "No students yet" }))
+      .toBeVisible();
+  });
+
+  test("rejects repeated search parameters without calling the API", async ({
+    page,
+    request,
+  }) => {
+    await useScenario(request, "populated");
+    await page.goto("/?q=one&q=two");
+
+    await expect(
+      page.getByRole("heading", { name: "This search link is invalid" }),
+    ).toBeVisible();
+    expect(await receivedRequests(request)).toEqual([]);
+  });
+
+  test("retry preserves the submitted search", async ({ page, request }) => {
+    await useScenario(request, "unavailable");
+    await page.goto("/?q=Velmira");
+
+    await expect(
+      page.getByRole("heading", { name: "We couldn’t load the directory" }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Try again" }))
+      .toHaveAttribute("href", "/?q=Velmira");
+
+    await useScenario(request, "populated");
+    await page.getByRole("link", { name: "Try again" }).click();
+
+    await expect(page.getByRole("table")).toBeVisible();
+    await expect(page.getByRole("searchbox")).toHaveValue("Velmira");
   });
 });

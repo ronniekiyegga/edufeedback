@@ -6,13 +6,9 @@ import { studentPageSchema, type StudentPage } from "./student-page.schema";
 
 const PAGE_SIZE = "25";
 
-// The API allows up to 15s to acquire a database connection and 5s per
-// statement. Waiting longer than either lets the API usually answer with its
-// own 503 first. The limits are separate, so neither adds up to a guaranteed
-// bound on API latency.
 const REQUEST_TIMEOUT_MS = 25_000;
 
-type StudentPageResult =
+export type StudentPageResult =
   | { status: "success"; data: StudentPage }
   | { status: "invalid-cursor" }
   | { status: "unavailable" };
@@ -31,7 +27,6 @@ const fetchErrorSchema = z.object({
   cause: z.object({ code: z.string() }).optional(),
 });
 
-// Logs classification only: never the URL, cursor or response body.
 function logFailure(fields: {
   requestId: string;
   reason: FailureReason;
@@ -54,10 +49,15 @@ function describeFetchError(error: unknown) {
   } as const;
 }
 
-export async function getStudents(
-  cursor?: string,
-): Promise<StudentPageResult> {
-  // Directory data is per request and never prerendered.
+type StudentPageQuery = {
+  cursor?: string;
+  search?: string;
+};
+
+export async function getStudents({
+  cursor,
+  search,
+}: StudentPageQuery = {}): Promise<StudentPageResult> {
   await connection();
 
   const apiUrl = process.env.ATTAINLINE_API_URL;
@@ -68,8 +68,21 @@ export async function getStudents(
     return unavailable;
   }
 
-  const url = new URL("/students", apiUrl);
+  const baseUrl = new URL(apiUrl);
+
+  if (!baseUrl.pathname.endsWith("/")) {
+    baseUrl.pathname += "/";
+  }
+
+  baseUrl.search = "";
+  baseUrl.hash = "";
+
+  const url = new URL("students", baseUrl);
   url.searchParams.set("limit", PAGE_SIZE);
+
+  if (search) {
+    url.searchParams.set("q", search);
+  }
 
   if (cursor) {
     url.searchParams.set("cursor", cursor);
@@ -88,8 +101,7 @@ export async function getStudents(
     return unavailable;
   }
 
-  // Only the cursor varies between requests, so a 400 means it was rejected.
-  if (response.status === 400) {
+  if (response.status === 400 && cursor) {
     return { status: "invalid-cursor" };
   }
 

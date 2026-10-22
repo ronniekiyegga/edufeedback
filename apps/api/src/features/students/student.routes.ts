@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import { describeDatabaseError } from "../../database-errors.js";
 import type { Logger } from "../../logger.js";
-import type { StudentCursorCodec } from "./student.cursor.js";
+import { searchHash, type StudentCursorCodec } from "./student.cursor.js";
 import { createStudentPaginationSchema } from "./student.pagination.js";
 import type { listStudents } from "./student.repository.js";
 
@@ -35,11 +35,15 @@ export function createStudentRouter({
       return;
     }
 
-    const { limit, cursor } = pagination.data;
+    const { limit, cursor, q } = pagination.data;
+    const search = q || undefined;
+    const expectedSearchHash = searchHash(search);
 
-    // A valid token from another organisation is still rejected: the query
-    // below is always scoped to the server's organisation, never the cursor's.
-    if (cursor && cursor.organisationId !== organisationId) {
+    if (
+      cursor &&
+      (cursor.organisationId !== organisationId ||
+        cursor.searchHash !== expectedSearchHash)
+    ) {
       rejectPagination(response);
       return;
     }
@@ -49,13 +53,18 @@ export function createStudentRouter({
         organisationId,
         limit,
         after: cursor && { surname: cursor.surname, id: cursor.id },
+        ...(search && { search }),
       });
 
-      response.json({
-        items: page.items,
-        nextCursor: page.next && cursorCodec.encode({ organisationId, ...page.next }),
-        limit,
-      });
+      const nextCursor = page.next
+        ? cursorCodec.encode({
+            organisationId,
+            ...page.next,
+            ...(expectedSearchHash && { searchHash: expectedSearchHash }),
+          })
+        : null;
+
+      response.json({ items: page.items, nextCursor, limit });
     } catch (error) {
       logger.error("students.list_failed", {
         requestId: response.locals.requestId,
